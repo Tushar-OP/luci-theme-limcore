@@ -17,7 +17,7 @@ jobs:
       matrix:
         pkg_type: [ipk, apk]
     steps:
-      - uses: eamonxg/build-luci-package@master
+      - uses: eamonxg/build-luci-package@v1
         with:
           package: luci-theme-limcore
           pkg_type: ${{ matrix.pkg_type }}
