@@ -1836,9 +1836,40 @@
           background: color-mix(in srgb, rgb(220, 38, 38) 15%, var(--card));
         }
 
-        /* Center the ::before icon within padding-left area */
+        /* Center the ::before icon within padding-left area and pin it to the
+           first line — vertical centering floats it mid-body on tall toasts */
         &::before {
           left: 0.875rem;
+          top: 1rem;
+          translate: none;
+
+          @media (max-width: 767px) {
+            top: 0.75rem;
+          }
+        }
+
+        /* Toasts carrying a table (firmware upgrade notice) need more room */
+        &:has(table, .table) {
+          @media (min-width: 768px) {
+            max-width: 480px;
+          }
+        }
+
+        /* Action buttons inside the message body — ghost style in the toast's
+           own color instead of the opaque secondary button */
+        & > div:not([class]):not(:last-child) > .btn {
+          height: auto;
+          min-height: 2rem;
+          margin-top: 0.75rem;
+          padding-block: 0.375rem;
+          border-color: color-mix(in srgb, currentColor 30%, transparent);
+          background: transparent;
+          color: inherit;
+          box-shadow: none;
+
+          &:hover {
+            background: color-mix(in srgb, currentColor 10%, transparent);
+          }
         }
 
         /* Toasts with close button need extra right padding */
@@ -2997,6 +3028,73 @@
           @apply !w-auto;
         }
       }
+    }
+
+    /* Tables inside floating toasts (firmware upgrade notice). Lives in this
+       layer, not in message, because the table layer comes later and would
+       win. Compact, flush with the text, and kept a real table on mobile
+       instead of the stacked card layout. */
+    #maincontent > .alert-message :is(table, .table) {
+      display: table;
+      width: auto;
+      margin: 0.5rem 0 0.25rem;
+
+      & :is(tr, .tr) {
+        display: table-row;
+        padding: 0;
+        border: 0;
+      }
+
+      & :is(th, .th, td, .td) {
+        display: table-cell;
+        width: auto;
+        padding: 0.125rem 1rem 0.125rem 0;
+        border: 0;
+        color: inherit;
+        font-size: var(--text-xs);
+        line-height: 1.5;
+
+        &::before {
+          display: none;
+        }
+
+        &:last-child {
+          padding-right: 0;
+        }
+      }
+
+      & :is(th, .th) {
+        padding-bottom: 0.25rem;
+        font-weight: 500;
+        opacity: 0.6;
+      }
+
+      /* Row labels may wrap; version strings are atomic — except on phones,
+         where two 17-char revision hashes alone outgrow the toast */
+      & :is(td, .td):first-child {
+        opacity: 0.75;
+      }
+
+      & :is(td, .td):not(:first-child) {
+        font-family: var(--font-mono);
+        white-space: nowrap;
+
+        @media (max-width: 767px) {
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+      }
+
+      @media (max-width: 767px) {
+        & :is(th, .th, td, .td) {
+          padding-right: 0.75rem;
+        }
+      }
+    }
+
+    /* Let the message body shrink below its table's min-content width */
+    #maincontent > .alert-message > div:not([class]):first-child {
+      min-width: 0;
     }
   }
 
