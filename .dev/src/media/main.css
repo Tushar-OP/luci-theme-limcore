@@ -1842,12 +1842,13 @@
         }
 
         /* Toasts with close button need extra right padding */
-        &:has(> div:not([class]) > .btn) {
+        &:has(> div:not([class]):last-child > .btn) {
           padding-right: 2.5rem;
         }
 
-        /* X close button — dismiss wrapper is classless div (not .right) */
-        & > div:not([class]):has(> .btn) {
+        /* X close button — dismiss wrapper is the last classless div (not .right);
+           the first classless div holds the message body and may contain its own .btn */
+        & > div:not([class]):last-child:has(> .btn) {
           position: absolute;
           top: 0.5rem;
           right: 0.5rem;
