@@ -117,3 +117,12 @@ Apache License 2.0. Тема основана на [luci-theme-aurora](https://g
 
 ### 💬 Связь
 - **Telegram**: [Канал](https://t.me/LimCoreChannel)
+
+## Сборка вручную
+
+GitHub Actions отключены. Тема собирается в OpenWrt SDK как пакет luci-theme-limcore
+для нужной версии OpenWrt и архитектуры, через стандартный package/luci-theme-limcore/compile.
+Прежний workflow использовал eamonxg/build-luci-package@v1 с типами ipk/apk,
+обновлением feeds base/luci и release notes из .dev/docs/changelog/<version>.md.
+Для новой сборки агент должен выбрать соответствующий OpenWrt SDK; автоматической
+публикации по тегу больше нет.
