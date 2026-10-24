@@ -4,20 +4,18 @@ name: Build LimCore with verified OpenWrt SDK
 on:
   workflow_dispatch:
 
-# The job only needs to read the repository.
 permissions:
   contents: read
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     permissions:
       contents: read
 
     env:
-      # Replace these four values before running the workflow.
       OPENWRT_RELEASE: "25.12.6"
       OPENWRT_TARGET: "mediatek/filogic"
       SDK_FILENAME: "openwrt-sdk-25.12.6-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
@@ -53,7 +51,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential clang flex bison g++ gawk gettext \
             git libncurses-dev libssl-dev python3-dev \
-            python3-setuptools rsync swig time unzip wget \
+            python3-setuptools rsync swig time unzip wget curl \
             xsltproc zlib1g-dev file zstd
 
       - name: Download and verify SDK archive
@@ -62,33 +60,36 @@ jobs:
           set -euo pipefail
 
           BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${OPENWRT_TARGET}"
-          SDK_PATH="$RUNNER_TEMP/openwrt-sdk.tar"
+          SDK_PATH="$RUNNER_TEMP/$SDK_FILENAME"
 
           curl --fail --show-error --location \
             --proto '=https' --proto-redir '=https' --tlsv1.2 \
             "$BASE_URL/$SDK_FILENAME" \
             --output "$SDK_PATH"
 
-          # SDK_SHA256 must have been copied from the
-          # independently signature-verified OpenWrt checksum file.
+          # This expected hash must come from OpenWrt's
+          # independently signature-verified checksum file.
           printf '%s  %s\n' "$SDK_SHA256" "$SDK_PATH" \
             | sha256sum --check --strict -
 
-      - name: Extract SDK, pin LuCI feed and build package
+          echo "SDK checksum verified."
+
+      - name: Extract SDK, pin release feeds and build package
         shell: bash
         run: |
           set -euo pipefail
 
           SDK_DIR="$RUNNER_TEMP/openwrt-sdk"
+          SDK_PATH="$RUNNER_TEMP/$SDK_FILENAME"
           mkdir -p "$SDK_DIR"
 
           case "$SDK_FILENAME" in
             *.tar.zst)
-              tar --zstd -xf "$RUNNER_TEMP/openwrt-sdk.tar" \
+              tar --zstd -xf "$SDK_PATH" \
                 -C "$SDK_DIR" --strip-components=1
               ;;
             *.tar.xz)
-              tar -xJf "$RUNNER_TEMP/openwrt-sdk.tar" \
+              tar -xJf "$SDK_PATH" \
                 -C "$SDK_DIR" --strip-components=1
               ;;
             *)
@@ -97,56 +98,79 @@ jobs:
               ;;
           esac
 
-          # Use the LuCI branch matching the stable SDK release.
-          SERIES="${OPENWRT_RELEASE%.*}"
-
           cd "$SDK_DIR"
 
-          python3 - "$SERIES" <<'PY'
+          # Pin every configured OpenWrt feed to the exact
+          # revision used for the official 25.12.6 release.
+          python3 <<'PY'
           import pathlib
-          import sys
 
-          series = sys.argv[1]
+          pins = {
+              "packages": (
+                  "https://git.openwrt.org/feed/packages.git",
+                  "093d551675b1119a06ef224d419905e8d6b2af1a",
+              ),
+              "luci": (
+                  "https://git.openwrt.org/project/luci.git",
+                  "75a306df84a020c57a631ef5b4c02ace56d93387",
+              ),
+              "routing": (
+                  "https://git.openwrt.org/feed/routing.git",
+                  "48c808034414a2112cf9d5261a20a320e8d0d170",
+              ),
+              "telephony": (
+                  "https://git.openwrt.org/feed/telephony.git",
+                  "2618106d5846a4a542fdf5809f0d3ed228ce439b",
+              ),
+              "video": (
+                  "https://github.com/openwrt/video.git",
+                  "094bf58da6682f895255a35a84349a79dab4bf95",
+              ),
+          }
+
           path = pathlib.Path("feeds.conf.default")
           lines = path.read_text().splitlines()
+          found = {name: 0 for name in pins}
 
-          matches = [
-              i for i, line in enumerate(lines)
-              if line.startswith("src-git luci ")
+          for i, line in enumerate(lines):
+              parts = line.split()
+              if len(parts) >= 3 and parts[0] == "src-git":
+                  name = parts[1]
+                  if name in pins:
+                      url, commit = pins[name]
+                      lines[i] = f"src-git {name} {url}^{commit}"
+                      found[name] += 1
+
+          invalid = [
+              name for name, count in found.items() if count != 1
           ]
-
-          if len(matches) != 1:
+          if invalid:
               raise SystemExit(
-                  "Expected exactly one active LuCI feed; inspect the SDK."
+                  "Expected exactly one configured entry for each feed; "
+                  f"check these feeds: {', '.join(invalid)}"
               )
 
-          lines[matches[0]] = (
-              "src-git luci "
-              "https://git.openwrt.org/project/luci.git;"
-              f"openwrt-{series}"
-          )
-
           path.write_text("\n".join(lines) + "\n")
+          print("Pinned all five feeds to the official release revisions.")
           PY
 
-          ./scripts/feeds update luci
-          ./scripts/feeds install luci-base
+          # Populate the feed indexes, then make package recipes
+          # available so dependencies can be resolved.
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-          # Stage only tracked files from the pinned source commit.
+          # Stage source from the verified LimCore commit.
+          SOURCE_COMMIT="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
           mkdir -p package/luci-theme-limcore
-          git -C "$GITHUB_WORKSPACE" archive --format=tar HEAD \
+
+          git -C "$GITHUB_WORKSPACE" archive --format=tar "$SOURCE_COMMIT" \
             | tar -xf - -C package/luci-theme-limcore
 
+          # Let the SDK resolve package configuration normally.
+          # Do not disable luci-base or its required dependencies.
           make defconfig
 
-          # Build the theme only; don't rebuild router-side LuCI packages.
-          for pkg in luci luci-base liblucihttp liblucihttp-lua liblucihttp-ucode; do
-          ./scripts/config --disable "PACKAGE_${pkg}"
-          done
-          
-          make defconfig
-          
-          # Build LimCore.
+          # Build LimCore and the dependencies needed by the SDK.
           make -j2 package/luci-theme-limcore/compile V=s
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
@@ -166,11 +190,16 @@ jobs:
           cp "${PACKAGES[@]}" "$GITHUB_WORKSPACE/dist/"
 
           {
-            echo "LimCore source commit: $(git rev-parse HEAD)"
+            echo "LimCore source commit: $SOURCE_COMMIT"
             echo "OpenWrt release: $OPENWRT_RELEASE"
             echo "OpenWrt target: $OPENWRT_TARGET"
             echo "SDK archive: $SDK_FILENAME"
             echo "SDK SHA-256: $SDK_SHA256"
+            echo "Packages feed commit: 093d551675b1119a06ef224d419905e8d6b2af1a"
+            echo "LuCI feed commit: 75a306df84a020c57a631ef5b4c02ace56d93387"
+            echo "Routing feed commit: 48c808034414a2112cf9d5261a20a320e8d0d170"
+            echo "Telephony feed commit: 2618106d5846a4a542fdf5809f0d3ed228ce439b"
+            echo "Video feed commit: 094bf58da6682f895255a35a84349a79dab4bf95"
           } > "$GITHUB_WORKSPACE/dist/BUILD-METADATA.txt"
 
           cd "$GITHUB_WORKSPACE/dist"
@@ -180,7 +209,7 @@ jobs:
           sha256sum "${FILES[@]}" BUILD-METADATA.txt > SHA256SUMS
 
       - name: Upload package for manual inspection
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: limcore-openwrt-${{ github.run_id }}
           path: dist/
