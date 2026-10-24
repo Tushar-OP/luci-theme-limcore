@@ -138,6 +138,15 @@ jobs:
             | tar -xf - -C package/luci-theme-limcore
 
           make defconfig
+
+          # Build the theme only; don't rebuild router-side LuCI packages.
+          for pkg in luci luci-base liblucihttp liblucihttp-lua liblucihttp-ucode; do
+          ./scripts/config --disable "PACKAGE_${pkg}"
+          done
+          
+          make defconfig
+          
+          # Build LimCore.
           make -j2 package/luci-theme-limcore/compile V=s
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
